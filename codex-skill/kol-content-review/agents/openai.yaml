@@ -1,0 +1,4 @@
+interface:
+  display_name: "达人投放稿件审核"
+  short_description: "审核小红书与抖音达人投放稿件，输出风险分级、修改建议及优化稿"
+  default_prompt: "使用 $kol-content-review，根据品牌 brief、产品信息、达人风格和平台要求审核稿件，标记风险并给出可直接使用的修改建议。"
