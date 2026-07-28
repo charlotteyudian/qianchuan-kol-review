@@ -42,23 +42,123 @@ function normalizedAnchor(value: string) {
     .trim();
 }
 
-function addCommentsToParagraph(paragraphXml: string, ids: number[]) {
-  const anchors = ids.map((id) => `<w:commentRangeStart w:id="${id}"/><w:commentRangeEnd w:id="${id}"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${id}"/></w:r>`).join("");
-  return paragraphXml.replace(/<\/w:p>$/, `${anchors}</w:p>`);
+type RevisionIssue = {
+  commentId: number;
+  deletionId: number;
+  insertionId: number;
+  issue: ExportIssue;
+};
+
+type PlannedRevision = RevisionIssue & {
+  start: number;
+  end: number;
+  oldText: string;
+  newText: string;
+  append: boolean;
+};
+
+function revisionText(issue: ExportIssue) {
+  const quoted = issue.suggestion.match(/[“"]([^”"]+)[”"]/u)?.[1]?.trim();
+  if (quoted) return quoted;
+  const cleaned = issue.suggestion
+    .replace(/^(?:建议)?(?:改为|替换为|补入|补充|增加|自然补入)[：:\s]*/u, "")
+    .replace(/[。；;]\s*$/u, "")
+    .trim();
+  return cleaned || issue.suggestion.trim();
 }
 
-function markParagraphRuns(paragraphXml: string) {
-  return paragraphXml.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (originalRun) => {
-    if (!/<w:t(?:\s[^>]*)?>/.test(originalRun)) return originalRun;
-    const run = originalRun
-      .replace(/<w:color\b[^>]*\/>/g, "")
-      .replace(/<w:highlight\b[^>]*\/>/g, "");
-    const marker = '<w:color w:val="C00000"/><w:highlight w:val="yellow"/>';
-    if (/<w:rPr(?:\s[^>]*)?>/.test(run)) {
-      return run.replace(/(<w:rPr(?:\s[^>]*)?>)/, `$1${marker}`);
-    }
-    return run.replace(/^(<w:r(?:\s[^>]*)?>)/, `$1<w:rPr>${marker}</w:rPr>`);
+function planRevisions(text: string, issues: RevisionIssue[]) {
+  const located: PlannedRevision[] = [];
+  const appended: PlannedRevision[] = [];
+  issues.forEach((item) => {
+    const anchor = normalizedAnchor(item.issue.quote);
+    const start = anchor && !/^(全文|稿件抬头\/备注|脚本结尾)$/u.test(anchor)
+      ? text.indexOf(anchor)
+      : -1;
+    const planned = {
+      ...item,
+      start: start >= 0 ? start : text.length,
+      end: start >= 0 ? start + anchor.length : text.length,
+      oldText: start >= 0 ? anchor : "",
+      newText: revisionText(item.issue),
+      append: start < 0,
+    };
+    if (start >= 0) located.push(planned);
+    else appended.push(planned);
   });
+
+  located.sort((a, b) => a.start - b.start);
+  const accepted: PlannedRevision[] = [];
+  let cursor = -1;
+  located.forEach((revision) => {
+    if (revision.start >= cursor) {
+      accepted.push(revision);
+      cursor = revision.end;
+    } else {
+      appended.push({ ...revision, start: text.length, end: text.length, oldText: "", append: true });
+    }
+  });
+  return [...accepted, ...appended];
+}
+
+function cleanRunProperties(runProperties: string) {
+  return runProperties
+    .replace(/<w:color\b[^>]*\/>/g, "")
+    .replace(/<w:highlight\b[^>]*\/>/g, "")
+    .replace(/<w:strike\b[^>]*\/>/g, "");
+}
+
+function styledRunProperties(base: string, marker: string) {
+  const cleaned = cleanRunProperties(base);
+  if (/<w:rPr(?:\s[^>]*)?>/.test(cleaned)) {
+    return cleaned.replace(/(<w:rPr(?:\s[^>]*)?>)/, `$1${marker}`);
+  }
+  return `<w:rPr>${marker}</w:rPr>`;
+}
+
+function textRunXml(text: string, runProperties = "") {
+  if (!text) return "";
+  return `<w:r>${runProperties}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
+}
+
+function commentReferenceXml(id: number) {
+  return `<w:commentRangeEnd w:id="${id}"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${id}"/></w:r>`;
+}
+
+function trackedParagraphXml(paragraphXml: string, issues: RevisionIssue[], date: string) {
+  const text = paragraphText(paragraphXml);
+  const paragraphProperties = paragraphXml.match(/<w:pPr(?:\s[^>]*)?>[\s\S]*?<\/w:pPr>/)?.[0] ?? "";
+  const baseRunProperties = paragraphXml.match(/<w:rPr(?:\s[^>]*)?>[\s\S]*?<\/w:rPr>/)?.[0] ?? "";
+  const deletionProperties = styledRunProperties(baseRunProperties, '<w:color w:val="C00000"/><w:strike/>');
+  const insertionProperties = styledRunProperties(baseRunProperties, '<w:color w:val="1F4E78"/>');
+  const revisions = planRevisions(text, issues);
+  const located = revisions.filter((revision) => !revision.append).sort((a, b) => a.start - b.start);
+  const appended = revisions.filter((revision) => revision.append);
+  let cursor = 0;
+  const body: string[] = [];
+
+  located.forEach((revision) => {
+    body.push(textRunXml(text.slice(cursor, revision.start), baseRunProperties));
+    body.push(`<w:commentRangeStart w:id="${revision.commentId}"/>`);
+    body.push(`<w:del w:id="${revision.deletionId}" w:author="仟传小省力" w:date="${date}"><w:r>${deletionProperties}<w:delText xml:space="preserve">${escapeXml(revision.oldText)}</w:delText></w:r></w:del>`);
+    body.push(`<w:ins w:id="${revision.insertionId}" w:author="仟传小省力" w:date="${date}">${textRunXml(revision.newText, insertionProperties)}</w:ins>`);
+    body.push(commentReferenceXml(revision.commentId));
+    cursor = revision.end;
+  });
+  body.push(textRunXml(text.slice(cursor), baseRunProperties));
+
+  appended.forEach((revision) => {
+    body.push(`<w:commentRangeStart w:id="${revision.commentId}"/>`);
+    body.push(`<w:ins w:id="${revision.insertionId}" w:author="仟传小省力" w:date="${date}">${textRunXml(` ${revision.newText}`, insertionProperties)}</w:ins>`);
+    body.push(commentReferenceXml(revision.commentId));
+  });
+
+  return `<w:p>${paragraphProperties}${body.join("")}</w:p>`;
+}
+
+function enableTrackRevisions(settingsXml: string) {
+  if (/<w:trackRevisions\b/.test(settingsXml)) return settingsXml;
+  return settingsXml.replace(/(<w:settings(?:\s[^>]*)?>)/, "$1<w:trackRevisions/>");
 }
 
 function commentParagraphXml(label: string, value: string, color: string, includeAnnotation = false) {
@@ -105,31 +205,52 @@ async function annotateExistingDocx(file: File, issues: ExportIssue[]) {
   let commentsXml = commentsFile ? await commentsFile.async("string") : "";
   const existingIds = [...commentsXml.matchAll(/w:id="(\d+)"/g)].map((match) => Number(match[1]));
   let nextId = existingIds.length ? Math.max(...existingIds) + 1 : 0;
+  const existingRevisionIds = [...documentXml.matchAll(/<w:(?:ins|del)\b[^>]*w:id="(\d+)"/g)].map((match) => Number(match[1]));
+  let nextRevisionId = existingRevisionIds.length ? Math.max(...existingRevisionIds) + 1 : 0;
 
-  const groups = new Map<number, Array<{ id: number; issue: ExportIssue }>>();
+  const groups = new Map<number, RevisionIssue[]>();
   issues.forEach((issue, issueIndex) => {
     const anchor = normalizedAnchor(issue.quote);
-    let target = anchor && !/^(全文|稿件抬头\/备注)$/u.test(anchor)
-      ? usable.find((paragraph) => paragraph.text.includes(anchor))
-      : undefined;
+    let target;
+    if (/^(?:脚本)?结尾$/u.test(anchor)) {
+      target = usable[usable.length - 1];
+    } else if (/^(?:稿件抬头\/备注|开头)$/u.test(anchor)) {
+      target = usable[0];
+    } else if (anchor && anchor !== "全文") {
+      target = usable.find((paragraph) => paragraph.text.includes(anchor));
+    }
     if (!target) target = usable[Math.min(issueIndex, usable.length - 1)];
     const group = groups.get(target.index) ?? [];
-    group.push({ id: nextId++, issue });
+    group.push({
+      commentId: nextId++,
+      deletionId: nextRevisionId++,
+      insertionId: nextRevisionId++,
+      issue,
+    });
     groups.set(target.index, group);
   });
 
   const additions: string[] = [];
+  const revisionDate = new Date().toISOString();
   const replacements = [...groups.entries()].map(([index, groupedIssues]) => {
     const paragraph = paragraphs.find((item) => item.index === index)!;
-    groupedIssues.forEach(({ id, issue }) => additions.push(makeCommentXml(id, issue)));
-    const markedParagraph = markParagraphRuns(paragraph.xml);
-    return { index, oldLength: paragraph.xml.length, xml: addCommentsToParagraph(markedParagraph, groupedIssues.map((item) => item.id)) };
+    groupedIssues.forEach(({ commentId, issue }) => additions.push(makeCommentXml(commentId, issue)));
+    return {
+      index,
+      oldLength: paragraph.xml.length,
+      xml: trackedParagraphXml(paragraph.xml, groupedIssues, revisionDate),
+    };
   }).sort((a, b) => b.index - a.index);
 
   replacements.forEach((replacement) => {
     documentXml = `${documentXml.slice(0, replacement.index)}${replacement.xml}${documentXml.slice(replacement.index + replacement.oldLength)}`;
   });
   zip.file("word/document.xml", documentXml);
+
+  const settingsFile = zip.file("word/settings.xml");
+  if (settingsFile) {
+    zip.file("word/settings.xml", enableTrackRevisions(await settingsFile.async("string")));
+  }
 
   if (commentsXml) {
     commentsXml = commentsXml.includes("</w:comments>")
@@ -165,13 +286,21 @@ async function annotateExistingDocx(file: File, issues: ExportIssue[]) {
 }
 
 async function createAnnotatedDocx(draft: string, issues: ExportIssue[], title: string) {
-  const { CommentRangeEnd, CommentRangeStart, CommentReference, Document, HighlightColor, Packer, Paragraph, TextRun } = await import("docx");
+  const { CommentRangeEnd, CommentRangeStart, CommentReference, DeletedTextRun, Document, InsertedTextRun, Packer, Paragraph, TextRun } = await import("docx");
   const lines = draft.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const grouped = new Map<number, Array<{ id: number; issue: ExportIssue }>>();
+  const grouped = new Map<number, RevisionIssue[]>();
   const comments: Array<{ id: number; author: string; initials: string; date: Date; children: InstanceType<typeof Paragraph>[] }> = [];
+  let nextRevisionId = 0;
   issues.forEach((issue, issueIndex) => {
     const anchor = normalizedAnchor(issue.quote);
-    let lineIndex = anchor && !/^(全文|稿件抬头\/备注)$/u.test(anchor) ? lines.findIndex((line) => line.includes(anchor)) : -1;
+    let lineIndex = -1;
+    if (/^(?:脚本)?结尾$/u.test(anchor)) {
+      lineIndex = Math.max(lines.length - 1, 0);
+    } else if (/^(?:稿件抬头\/备注|开头)$/u.test(anchor)) {
+      lineIndex = 0;
+    } else if (anchor && anchor !== "全文") {
+      lineIndex = lines.findIndex((line) => line.includes(anchor));
+    }
     if (lineIndex < 0) lineIndex = Math.min(issueIndex, Math.max(lines.length - 1, 0));
     const id = comments.length;
     comments.push({
@@ -198,7 +327,12 @@ async function createAnnotatedDocx(draft: string, issues: ExportIssue[], title: 
         ] }),
       ],
     });
-    grouped.set(lineIndex, [...(grouped.get(lineIndex) ?? []), { id, issue }]);
+    grouped.set(lineIndex, [...(grouped.get(lineIndex) ?? []), {
+      commentId: id,
+      deletionId: nextRevisionId++,
+      insertionId: nextRevisionId++,
+      issue,
+    }]);
   });
 
   const children = [new Paragraph({ children: [new TextRun({ text: title, font: "Arial Unicode MS", size: 44, bold: true, color: "5A2E1F" })], spacing: { after: 240 } })];
@@ -208,14 +342,33 @@ async function createAnnotatedDocx(draft: string, issues: ExportIssue[], title: 
       children.push(new Paragraph({ children: [new TextRun({ text: line, font: "Arial Unicode MS", size: 22 })], spacing: { after: 120, line: 300 } }));
       return;
     }
-    const commentAnchors = groupedIssues.flatMap(({ id }) => [new CommentRangeStart(id), new CommentRangeEnd(id), new CommentReference(id)]);
-    children.push(new Paragraph({ children: [new TextRun({ text: line, font: "Arial Unicode MS", size: 22, color: "C00000", highlight: HighlightColor.YELLOW }), ...commentAnchors], spacing: { after: 120, line: 300 } }));
+    const revisions = planRevisions(line, groupedIssues);
+    const located = revisions.filter((revision) => !revision.append).sort((a, b) => a.start - b.start);
+    const appended = revisions.filter((revision) => revision.append);
+    const paragraphChildren: Array<InstanceType<typeof TextRun> | InstanceType<typeof InsertedTextRun> | InstanceType<typeof DeletedTextRun> | InstanceType<typeof CommentRangeStart> | InstanceType<typeof CommentRangeEnd> | InstanceType<typeof CommentReference>> = [];
+    let cursor = 0;
+    located.forEach((revision) => {
+      if (revision.start > cursor) paragraphChildren.push(new TextRun({ text: line.slice(cursor, revision.start), font: "Arial Unicode MS", size: 22 }));
+      paragraphChildren.push(new CommentRangeStart(revision.commentId));
+      paragraphChildren.push(new DeletedTextRun({ id: revision.deletionId, author: "仟传小省力", date: new Date().toISOString(), text: revision.oldText, font: "Arial Unicode MS", size: 22, color: "C00000", strike: true }));
+      paragraphChildren.push(new InsertedTextRun({ id: revision.insertionId, author: "仟传小省力", date: new Date().toISOString(), text: revision.newText, font: "Arial Unicode MS", size: 22, color: "1F4E78" }));
+      paragraphChildren.push(new CommentRangeEnd(revision.commentId), new CommentReference(revision.commentId));
+      cursor = revision.end;
+    });
+    if (cursor < line.length) paragraphChildren.push(new TextRun({ text: line.slice(cursor), font: "Arial Unicode MS", size: 22 }));
+    appended.forEach((revision) => {
+      paragraphChildren.push(new CommentRangeStart(revision.commentId));
+      paragraphChildren.push(new InsertedTextRun({ id: revision.insertionId, author: "仟传小省力", date: new Date().toISOString(), text: ` ${revision.newText}`, font: "Arial Unicode MS", size: 22, color: "1F4E78" }));
+      paragraphChildren.push(new CommentRangeEnd(revision.commentId), new CommentReference(revision.commentId));
+    });
+    children.push(new Paragraph({ children: paragraphChildren, spacing: { after: 120, line: 300 } }));
   });
 
   const document = new Document({
     creator: "仟传小省力",
     title,
     styles: { default: { document: { run: { font: "Arial Unicode MS", size: 22 }, paragraph: { spacing: { after: 120, line: 300 } } } } },
+    features: { trackRevisions: true },
     comments: { children: comments },
     sections: [{ properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 708, footer: 708 } } }, children }],
   });
@@ -230,14 +383,16 @@ async function validateAnnotatedDocx(blob: Blob, expectedComments: number) {
   const documentXml = await zip.file("word/document.xml")?.async("string") ?? "";
   const commentCount = [...commentsXml.matchAll(/<w:comment\b/g)].length;
   const referenceCount = [...documentXml.matchAll(/<w:commentReference\b/g)].length;
-  if (commentCount < expectedComments || referenceCount < expectedComments) {
-    throw new Error(`批注写入校验失败：应有 ${expectedComments} 条，实际写入 ${Math.min(commentCount, referenceCount)} 条`);
+  const insertionCount = [...documentXml.matchAll(/<w:ins\b/g)].length;
+  const settingsXml = await zip.file("word/settings.xml")?.async("string") ?? "";
+  if (commentCount < expectedComments || referenceCount < expectedComments || insertionCount < expectedComments || !/<w:trackRevisions\b/.test(settingsXml)) {
+    throw new Error(`修订写入校验失败：应有 ${expectedComments} 条，实际写入 ${Math.min(commentCount, referenceCount, insertionCount)} 条`);
   }
 }
 
 export async function exportAnnotatedDraft(file: File | null, draft: string, issues: ExportIssue[], title: string) {
   if (!issues.length) throw new Error("当前没有可采纳的审核建议");
-  if (file && /\.pdf$/i.test(file.name)) throw new Error("PDF 无法直接写入 Word 批注，请上传原始 DOCX，或粘贴正文后再导出新 Word 稿");
+  if (file && /\.pdf$/i.test(file.name)) throw new Error("PDF 无法直接写入 WPS 修订，请上传原始 DOCX，或粘贴正文后再导出新 Word 稿");
   if (file && /\.docx$/i.test(file.name)) return annotateExistingDocx(file, issues);
   return createAnnotatedDocx(draft, issues, title);
 }

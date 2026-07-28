@@ -14,6 +14,5 @@ const issues = [
   { priority: "P2", title: "结尾缺少 CTA / 互动引导", quote: "在自我表达里活出松弛与深刻", reason: "价值升华后直接结束，缺少互动与收藏动机。", suggestion: "补充“你最喜欢哪一套造型？评论区和我聊聊”。" },
 ];
 
-const blob = await exportAnnotatedDraft(null, draft, issues, "Max Mara SS26 · 岛屿白噪音 · 达人脚本审核批注稿");
+const blob = await exportAnnotatedDraft(null, draft, issues, "Max Mara SS26 · 岛屿白噪音 · 达人脚本审核修订稿");
 await writeFile("public/demo/island-whitenoise-annotated.docx", new Uint8Array(await blob.arrayBuffer()));
-

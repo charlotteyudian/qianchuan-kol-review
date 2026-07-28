@@ -394,7 +394,7 @@ export default function ReviewWorkspace() {
         setDraft(await file.text());
       } else {
         setDraft("");
-        setExportMessage("PDF 请同时粘贴正文用于审核；需要原生批注稿时请上传 DOCX 原文件。");
+        setExportMessage("PDF 请同时粘贴正文用于审核；需要保留原排版的 WPS 修订稿时请上传 DOCX 原文件。");
       }
     } catch (error) {
       setDraft("");
@@ -428,7 +428,7 @@ export default function ReviewWorkspace() {
       setDraftFile(review.draftFileName);
       setOriginalDraftFile(null);
       setAcceptedIssues(savedResult.issues.map((_, index) => index));
-      setExportMessage("历史记录未保存原 Word 文件，将根据归档正文生成新的带批注 DOCX。");
+      setExportMessage("历史记录未保存原 Word 文件，将根据归档正文生成新的 WPS 修订 DOCX。");
       setActiveTab("issues");
     } catch {
       setProjectMessage("该历史记录无法读取");
@@ -443,20 +443,20 @@ export default function ReviewWorkspace() {
   async function exportReviewDocx() {
     if (!result || !acceptedIssues.length) return;
     setIsExporting(true);
-    setExportMessage("正在把已采纳建议写入 Word 批注…");
+    setExportMessage("正在把已采纳建议写入 WPS 修订…");
     try {
       const selected = result.issues.filter((_, index) => acceptedIssues.includes(index));
-      const blob = await exportAnnotatedDraft(originalDraftFile, draft, selected, `${projectName} · ${result.creator.name} · 审核批注稿`);
+      const blob = await exportAnnotatedDraft(originalDraftFile, draft, selected, `${projectName} · ${result.creator.name} · 审核修订稿`);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       const baseName = (draftFile || `${result.creator.name}-达人稿件`).replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|]/g, "-");
       link.href = url;
-      link.download = `${baseName}-仟传审核批注稿.docx`;
+      link.download = `${baseName}-仟传审核修订稿.docx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setExportMessage(`已核验并导出 ${selected.length} 条独立批注。请用 Word/WPS 打开，在「审阅 → 显示批注」中查看；系统快速预览通常不显示批注。`);
+      setExportMessage(`已核验并导出 ${selected.length} 条 WPS 修订。请在 WPS「审阅 → 修订」中逐条接受或拒绝；审核依据仍显示在右侧批注中。`);
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : "批注稿导出失败");
     } finally {
@@ -487,7 +487,7 @@ export default function ReviewWorkspace() {
             <div><label htmlFor="project-select">已有项目</label><select id="project-select" value={selectedProjectId ?? ""} onChange={(event) => { const project = projects.find((item) => item.id === Number(event.target.value)); if (project) selectProject(project); }}><option value="">选择已保存项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}（{project.reviewCount}篇）</option>)}</select></div>
             <button type="button" onClick={startNewProject}>＋ 新建项目</button>
           </div>
-          <div className="demo-files"><span>Max Mara 演示附件</span><a href="/demo/max-mara-ss26-brief.pdf" target="_blank" rel="noreferrer">Brief PDF</a><a href="/demo/island-whitenoise-script.pdf" target="_blank" rel="noreferrer">达人稿 PDF</a><a href="/demo/max-mara-review-report.pdf" target="_blank" rel="noreferrer">审核报告 PDF</a><a href="/api/demo-annotated?v=maxmara-color-comments-v2">批注稿 DOCX</a></div>
+          <div className="demo-files"><span>Max Mara 演示附件</span><a href="/demo/max-mara-ss26-brief.pdf" target="_blank" rel="noreferrer">Brief PDF</a><a href="/demo/island-whitenoise-script.pdf" target="_blank" rel="noreferrer">达人稿 PDF</a><a href="/demo/max-mara-review-report.pdf" target="_blank" rel="noreferrer">审核报告 PDF</a><a href="/api/demo-annotated?v=maxmara-wps-revisions-v1">修订稿 DOCX</a></div>
           <div className="field-row">
             <fieldset><legend>投放平台</legend><div className="segmented">{(["小红书", "抖音"] as Platform[]).map((item) => <button key={item} type="button" className={platform === item ? "active" : ""} onClick={() => { setPlatform(item); setContentType(item === "小红书" ? "图文笔记" : "短视频脚本"); setResult(null); }}>{item}</button>)}</div></fieldset>
             <fieldset><legend>内容形式</legend><select value={contentType} onChange={(event) => setContentType(event.target.value as ContentType)}><option>{platform === "小红书" ? "图文笔记" : "短视频脚本"}</option><option>{platform === "小红书" ? "视频笔记" : "剧情脚本"}</option></select></fieldset>
@@ -504,7 +504,7 @@ export default function ReviewWorkspace() {
 
           <div className="material-block">
             <div className="material-title"><span>02</span><div><h3>待审核稿件</h3><p>稿件中需包含达人姓名与小红书主页链接</p></div></div>
-            <FileUpload id="draft-file" label="上传待审稿件" hint="DOCX / TXT / MD 可自动读取；DOCX 可保留排版导出批注" fileName={draftFile} onChange={handleDraftUpload} />
+            <FileUpload id="draft-file" label="上传待审稿件" hint="DOCX / TXT / MD 可自动读取；DOCX 可保留排版导出 WPS 修订" fileName={draftFile} onChange={handleDraftUpload} />
             <textarea className="draft-textarea" aria-label="待审核稿件" value={draft} onChange={(event) => { setDraft(event.target.value); setResult(null); }} placeholder={'建议在稿件开头注明：\n达人：@昵称\n小红书主页：https://www.xiaohongshu.com/user/profile/...\n\n再粘贴完整稿件内容'} />
             <div className={`creator-detect ${detectedCreator.found ? "creator-detect--ready" : ""}`}>
               <div><span className="creator-detect__icon">{detectedCreator.found ? "✓" : "?"}</span><strong>{detectedCreator.found ? detectedCreator.name : "等待识别达人"}</strong></div>
@@ -534,7 +534,7 @@ export default function ReviewWorkspace() {
               <div className="summary-strip"><div><span className="priority priority--p0">P0</span><strong>{p0Count}</strong><small>红线问题</small></div><div><span className="priority priority--p1">P1</span><strong>{p1Count}</strong><small>必须修改</small></div><div><span className="priority priority--p2">P2</span><strong>{result.issues.length - p0Count - p1Count}</strong><small>建议优化</small></div><div><span className="check-mark">风</span><strong>{result.style.matchScore ?? "—"}</strong><small>大纲风格匹配</small></div></div>
               <nav className="result-tabs" aria-label="审核结果分类"><button type="button" className={activeTab === "issues" ? "active" : ""} onClick={() => setActiveTab("issues")}>问题清单</button><button type="button" className={activeTab === "style" ? "active" : ""} onClick={() => setActiveTab("style")}>达人风格</button><button type="button" className={activeTab === "brief" ? "active" : ""} onClick={() => setActiveTab("brief")}>Brief 对照</button><button type="button" className={activeTab === "rewrite" ? "active" : ""} onClick={() => setActiveTab("rewrite")}>完整优化稿</button></nav>
               <div className="result-content">
-                {activeTab === "issues" && <div className="issue-list">{result.issues.length === 0 ? <div className="all-clear">未检出规则风险，请继续人工核验事实、素材授权与平台最新要求。</div> : result.issues.map((issue, index) => <article className={`issue-card ${acceptedIssues.includes(index) ? "issue-card--accepted" : ""}`} key={`${issue.title}-${index}`}><div className="issue-card__top"><span className={`priority priority--${issue.priority.toLowerCase()}`}>{issue.priority}</span><small>问题 {String(index + 1).padStart(2, "0")}</small></div><h3>{issue.title}</h3><blockquote>“{issue.quote}”</blockquote><p>{issue.reason}</p><div className="suggestion"><strong>建议修改</strong><span>{issue.suggestion}</span></div><button className="accept-suggestion" type="button" aria-pressed={acceptedIssues.includes(index)} onClick={() => toggleIssue(index)}><span>{acceptedIssues.includes(index) ? "✓" : "+"}</span>{acceptedIssues.includes(index) ? "已采纳，将写入批注" : "采纳此建议"}</button></article>)}</div>}
+                {activeTab === "issues" && <div className="issue-list">{result.issues.length === 0 ? <div className="all-clear">未检出规则风险，请继续人工核验事实、素材授权与平台最新要求。</div> : result.issues.map((issue, index) => <article className={`issue-card ${acceptedIssues.includes(index) ? "issue-card--accepted" : ""}`} key={`${issue.title}-${index}`}><div className="issue-card__top"><span className={`priority priority--${issue.priority.toLowerCase()}`}>{issue.priority}</span><small>问题 {String(index + 1).padStart(2, "0")}</small></div><h3>{issue.title}</h3><blockquote>“{issue.quote}”</blockquote><p>{issue.reason}</p><div className="suggestion"><strong>建议修改</strong><span>{issue.suggestion}</span></div><button className="accept-suggestion" type="button" aria-pressed={acceptedIssues.includes(index)} onClick={() => toggleIssue(index)}><span>{acceptedIssues.includes(index) ? "✓" : "+"}</span>{acceptedIssues.includes(index) ? "已采纳，将写入修订" : "采纳此建议"}</button></article>)}</div>}
 
                 {activeTab === "style" && <div className="style-report">
                   <div className="style-overview"><div><small>样本范围</small><strong>{result.style.range}</strong><p>{result.style.sampleCount ? `已分析 ${result.style.sampleCount} 篇公开内容` : "接入授权采集服务后生成真实基线"}</p></div><div className="style-score"><strong>{result.style.matchScore ?? "—"}</strong><span>{result.style.matchScore === null ? "待采集" : "/ 100"}</span></div></div>
@@ -545,13 +545,13 @@ export default function ReviewWorkspace() {
                 </div>}
 
                 {activeTab === "brief" && <div className="brief-table"><div className="brief-table__head"><span>Brief 要求</span><span>审核状态</span><span>提取依据</span></div>{result.matches.map((match) => <div className="brief-table__row" key={match.label}><strong>{match.label}</strong><span className={`match match--${match.status}`}>{match.status}</span><p>{match.evidence}</p></div>)}</div>}
-                {activeTab === "rewrite" && <div className="rewrite-card"><div className="rewrite-card__meta"><span>{platform} · {contentType}</span><button type="button" onClick={() => navigator.clipboard?.writeText(result.optimized)}>复制优化稿</button></div><pre>{result.optimized}</pre><div className="human-check"><strong>发布前人工确认</strong><p>产品参数、活动价格、素材授权、商业合作标识及平台最新规则。</p></div><section className="export-step"><div className="export-step__heading"><span>04</span><div><strong>采纳建议并导出批注稿</strong><p>已选 {acceptedIssues.length} / {result.issues.length} 条建议；每条问题都会生成一条独立批注，下载前自动核对数量。</p></div></div><button className="export-button" type="button" disabled={isExporting || !acceptedIssues.length} onClick={exportReviewDocx}>{isExporting ? "正在核对并生成…" : `导出 ${acceptedIssues.length} 条 Word 批注`}<i aria-hidden="true">↓</i></button><small className="export-tip">原稿为 DOCX 时保留排版。请用 Word/WPS 的「审阅 → 显示批注」查看，系统快速预览不会显示批注。</small>{exportMessage && <p className={`export-message ${exportMessage.includes("失败") || exportMessage.includes("无法") ? "export-message--error" : ""}`}>{exportMessage}</p>}</section></div>}
+                {activeTab === "rewrite" && <div className="rewrite-card"><div className="rewrite-card__meta"><span>{platform} · {contentType}</span><button type="button" onClick={() => navigator.clipboard?.writeText(result.optimized)}>复制优化稿</button></div><pre>{result.optimized}</pre><div className="human-check"><strong>发布前人工确认</strong><p>产品参数、活动价格、素材授权、商业合作标识及平台最新规则。</p></div><section className="export-step"><div className="export-step__heading"><span>04</span><div><strong>采纳建议并导出 WPS 修订稿</strong><p>已选 {acceptedIssues.length} / {result.issues.length} 条建议；每条建议都会生成可接受或拒绝的修订，并保留审核依据批注。</p></div></div><button className="export-button" type="button" disabled={isExporting || !acceptedIssues.length} onClick={exportReviewDocx}>{isExporting ? "正在核对并生成…" : `导出 ${acceptedIssues.length} 条 WPS 修订`}<i aria-hidden="true">↓</i></button><small className="export-tip">原稿为 DOCX 时保留排版。请在 WPS「审阅 → 修订」中查看删除和插入内容，并逐条接受或拒绝。</small>{exportMessage && <p className={`export-message ${exportMessage.includes("失败") || exportMessage.includes("无法") ? "export-message--error" : ""}`}>{exportMessage}</p>}</section></div>}
               </div>
             </>
           )}
         </section>
       </section>
-      <footer><span>QIANCHUAN / KOL REVIEW DESK</span><p>仟传小省力 · 达人稿件审核</p><span>V1.3 · 批注稿导出</span></footer>
+      <footer><span>QIANCHUAN / KOL REVIEW DESK</span><p>仟传小省力 · 达人稿件审核</p><span>V1.4 · WPS 修订导出</span></footer>
     </main>
   );
 }
